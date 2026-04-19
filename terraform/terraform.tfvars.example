@@ -1,0 +1,4 @@
+environment     = "staging"
+location        = "uksouth"
+container_image = "ghcr.io/YOUR_ORG/release-ready:sha-abc1234"
+app_version     = "abc1234"
