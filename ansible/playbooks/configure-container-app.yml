@@ -1,0 +1,84 @@
+---
+# =============================================================================
+# Post-deployment configuration for Azure Container Apps.
+#
+# Terraform provisions the infrastructure (the "what exists"); this playbook
+# applies the operational configuration that may change between deployments
+# without touching infrastructure (the "how it behaves"): scaling rules,
+# log levels, feature flags, custom domains.
+#
+# Run with:
+#   ansible-playbook -i ansible/inventory.ini \
+#     ansible/playbooks/configure-container-app.yml \
+#     --extra-vars "image_tag=ghcr.io/OWNER/release-ready:sha-abc1234"
+# =============================================================================
+- name: Configure Azure Container App post-deployment
+  hosts: azure_container_apps
+  gather_facts: false
+  vars:
+    image_tag: "ghcr.io/OWNER/release-ready:latest"
+    log_level_default:
+      staging: debug
+      production: warn
+    min_replicas:
+      staging: 1
+      production: 2
+    max_replicas:
+      staging: 3
+      production: 10
+
+  tasks:
+    - name: Verify Azure CLI is available
+      ansible.builtin.command: az --version
+      register: az_version
+      changed_when: false
+
+    - name: Update container image and environment variables
+      ansible.builtin.command: >
+        az containerapp update
+          --name {{ inventory_hostname }}
+          --resource-group {{ resource_group }}
+          --image {{ image_tag }}
+          --set-env-vars
+            NODE_ENV={{ environment }}
+            LOG_LEVEL={{ log_level_default[environment] }}
+            APP_VERSION={{ image_tag | regex_replace('.*:', '') }}
+      register: update_result
+      changed_when: "'provisioningState' in update_result.stdout"
+
+    - name: Apply autoscaling rules
+      ansible.builtin.command: >
+        az containerapp update
+          --name {{ inventory_hostname }}
+          --resource-group {{ resource_group }}
+          --min-replicas {{ min_replicas[environment] }}
+          --max-replicas {{ max_replicas[environment] }}
+      register: scale_result
+      changed_when: "'provisioningState' in scale_result.stdout"
+
+    - name: Fetch public FQDN
+      ansible.builtin.command: >
+        az containerapp show
+          --name {{ inventory_hostname }}
+          --resource-group {{ resource_group }}
+          --query properties.configuration.ingress.fqdn
+          -o tsv
+      register: fqdn
+      changed_when: false
+
+    - name: Smoke-test /api/healthz
+      ansible.builtin.uri:
+        url: "https://{{ fqdn.stdout }}/api/healthz"
+        status_code: 200
+        return_content: true
+      register: health
+      retries: 5
+      delay: 10
+      until: health.status == 200
+
+    - name: Report deployment status
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} ({{ environment }}) is healthy at
+          https://{{ fqdn.stdout }}/api/healthz —
+          version {{ health.json.version }}, uptime {{ health.json.uptime }}s

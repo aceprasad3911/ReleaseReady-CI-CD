@@ -6,13 +6,13 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Target environment"
+        description: "Target environment (staging or production)"
         required: true
         default: staging
         type: choice
         options: [staging, production]
       image_tag:
-        description: "Image tag for rollback (leave blank for fresh build)"
+        description: "Docker image tag to deploy (leave blank to build fresh)"
         required: false
         type: string
 
@@ -50,18 +50,36 @@ jobs:
     name: Build & Push Container Image
     runs-on: ubuntu-latest
     outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
       short_sha: ${{ steps.sha.outputs.short }}
+      image_lc: ${{ steps.lc.outputs.image_lc }}
+
     steps:
       - uses: actions/checkout@v4
-      - id: sha
+
+      - name: Compute short SHA
+        id: sha
         run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+
+      - name: Lowercase image name (GHCR / syft / trivy require lowercase)
+        id: lc
+        run: |
+          LC="$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE_NAME=$LC" >> "$GITHUB_ENV"
+          echo "image_lc=$LC" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to container registry
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
+
+      - name: Extract metadata
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -69,14 +87,45 @@ jobs:
             type=sha,prefix=sha-
             type=ref,event=branch
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-      - uses: docker/build-push-action@v5
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.sha.outputs.short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Generate SBOM (SPDX) for the built image
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.short }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: true
+          upload-artifact-retention: 30
+
+      - name: Trivy scan of pushed image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.short }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: 0
+
+      - name: Upload Trivy SARIF
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-results-${{ steps.sha.outputs.short }}
+          path: trivy-results.sarif
+          retention-days: 30
 
   deploy-staging:
     name: Deploy to Staging
@@ -86,29 +135,50 @@ jobs:
     environment:
       name: staging
       url: https://release-ready-staging.uksouth.azurecontainerapps.io
+
+    env:
+      RESOURCE_GROUP: release-ready-rg
+      STAGING_APP_NAME: release-ready-staging
+      LOCATION: uksouth
+
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/login@v2
+
+      - name: Azure login
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
-      - name: Deploy to staging
+
+      - name: Deploy to Azure Container Apps (staging)
         run: |
           az containerapp update \
-            --name "release-ready-staging" \
-            --resource-group "release-ready-rg" \
-            --image "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ needs.build-image.outputs.short_sha }}" \
+            --name "$STAGING_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "${{ env.REGISTRY }}/${{ needs.build-image.outputs.image_lc }}:sha-${{ needs.build-image.outputs.short_sha }}" \
             --set-env-vars \
               NODE_ENV=staging \
               PORT=3000 \
               LOG_LEVEL=debug \
               APP_VERSION=${{ needs.build-image.outputs.short_sha }}
-      - name: Smoke test staging
+
+      - name: Smoke-test staging health endpoint
         run: |
+          echo "Waiting for deployment to stabilise..."
           sleep 30
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" \
             https://release-ready-staging.uksouth.azurecontainerapps.io/api/healthz)
-          [ "$STATUS" = "200" ] || (echo "Staging health check failed: HTTP $STATUS" && exit 1)
-          echo "Staging smoke test passed ✓"
+          if [ "$STATUS" != "200" ]; then
+            echo "Health check failed — HTTP $STATUS"
+            exit 1
+          fi
+          echo "Staging health check passed (HTTP $STATUS)"
+
+      - name: Record deployment in summary
+        run: |
+          echo "## Staging Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: \`sha-${{ needs.build-image.outputs.short_sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: staging" >> $GITHUB_STEP_SUMMARY
+          echo "- **Time**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
 
   deploy-production:
     name: Deploy to Production
@@ -118,43 +188,67 @@ jobs:
     environment:
       name: production
       url: https://release-ready.uksouth.azurecontainerapps.io
+
+    env:
+      RESOURCE_GROUP: release-ready-rg
+      PROD_APP_NAME: release-ready-prod
+      LOCATION: uksouth
+
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/login@v2
+
+      - name: Azure login
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
-      - name: Deploy to production
+
+      - name: Deploy to Azure Container Apps (production)
         run: |
           az containerapp update \
-            --name "release-ready-prod" \
-            --resource-group "release-ready-rg" \
-            --image "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ needs.build-image.outputs.short_sha }}" \
+            --name "$PROD_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "${{ env.REGISTRY }}/${{ needs.build-image.outputs.image_lc }}:sha-${{ needs.build-image.outputs.short_sha }}" \
             --set-env-vars \
               NODE_ENV=production \
               PORT=3000 \
               LOG_LEVEL=warn \
               APP_VERSION=${{ needs.build-image.outputs.short_sha }}
-      - name: Smoke test production
+
+      - name: Smoke-test production health endpoint
         run: |
+          echo "Waiting for deployment to stabilise..."
           sleep 30
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" \
             https://release-ready.uksouth.azurecontainerapps.io/api/healthz)
-          [ "$STATUS" = "200" ] || (echo "Production health check failed: HTTP $STATUS" && exit 1)
-          echo "Production smoke test passed ✓"
+          if [ "$STATUS" != "200" ]; then
+            echo "Production health check failed — HTTP $STATUS"
+            exit 1
+          fi
+          echo "Production health check passed (HTTP $STATUS)"
+
+      - name: Record deployment in summary
+        run: |
+          echo "## Production Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "- **Image**: \`sha-${{ needs.build-image.outputs.short_sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: production" >> $GITHUB_STEP_SUMMARY
+          echo "- **Time**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
 
   rollback-production:
     name: Rollback Production
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag != '' }}
     environment: production
+
     steps:
-      - uses: azure/login@v2
+      - name: Azure login
+        uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
-      - name: Redeploy previous image
+
+      - name: Redeploy previous image tag
         run: |
           az containerapp update \
             --name "release-ready-prod" \
             --resource-group "release-ready-rg" \
             --image "${{ github.event.inputs.image_tag }}"
-          echo "Rolled back to: ${{ github.event.inputs.image_tag }}"
+          echo "Rolled back production to: ${{ github.event.inputs.image_tag }}"
