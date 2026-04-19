@@ -10,9 +10,16 @@ export default defineConfig({
       reporter: ["text", "json", "html", "lcov"],
       include: ["src/**/*.ts"],
       exclude: ["src/index.ts"],
-      thresholds: { lines: 70, functions: 70, branches: 60, statements: 70 },
+      thresholds: {
+        lines: 80,
+        functions: 80,
+        branches: 70,
+        statements: 80,
+      },
     },
     reporters: ["verbose", "junit"],
-    outputFile: { junit: "test-results/junit.xml" },
+    outputFile: {
+      junit: "test-results/junit.xml",
+    },
   },
 });
