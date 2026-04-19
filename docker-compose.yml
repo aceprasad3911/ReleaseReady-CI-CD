@@ -1,0 +1,58 @@
+version: "3.9"
+
+# Usage:
+#   docker-compose up                       # staging (default)
+#   docker-compose --profile prod up        # staging + production
+#   curl http://localhost:3001/api/healthz  # test staging
+#   curl http://localhost:3002/api/healthz  # test production
+
+services:
+  staging:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    image: release-ready:staging
+    container_name: release-ready-staging
+    ports:
+      - "3001:3000"
+    environment:
+      NODE_ENV: staging
+      PORT: "3000"
+      LOG_LEVEL: debug
+      APP_VERSION: "local-staging"
+    env_file:
+      - .env.staging
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  production:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    image: release-ready:production
+    container_name: release-ready-production
+    profiles:
+      - prod
+    ports:
+      - "3002:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      LOG_LEVEL: warn
+      APP_VERSION: "local-production"
+    env_file:
+      - .env.production
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
