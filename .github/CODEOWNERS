@@ -1,0 +1,5 @@
+*                       @OWNER/release-ready-team
+.github/workflows/**    @OWNER/devops-team
+terraform/**            @OWNER/infra-team
+src/**                  @OWNER/dev-team
+tests/**                @OWNER/dev-team
