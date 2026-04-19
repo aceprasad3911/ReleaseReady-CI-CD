@@ -1,0 +1,31 @@
+{
+  "name": "release-ready",
+  "version": "1.0.0",
+  "description": "ReleaseReady — a web application for publishing short service updates",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts",
+    "test": "NODE_ENV=test vitest run --reporter=verbose",
+    "test:coverage": "NODE_ENV=test vitest run --coverage",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "pino": "^9.5.0",
+    "pino-http": "^10.3.0",
+    "pino-pretty": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.1",
+    "@types/supertest": "^6.0.2",
+    "@vitest/coverage-v8": "^3.0.0",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "~5.7.2",
+    "vitest": "^3.0.0"
+  },
+  "engines": { "node": ">=20" }
+}
