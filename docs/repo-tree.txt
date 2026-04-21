@@ -1,0 +1,63 @@
+.
+├── .github
+│   ├── workflows
+│   │   ├── cd.yml
+│   │   ├── ci.yml
+│   │   ├── security-scan.yml
+│   │   └── terraform.yml
+│   ├── CODEOWNERS
+│   └── pull_request_template.md
+├── ansible
+│   ├── playbooks
+│   │   └── configure-container-app.yml
+│   └── inventory.ini
+├── docs
+│   ├── diagrams
+│   ├── branch-protection.md
+│   ├── operational-visibility.md
+│   ├── optimisation-walkthrough.md
+│   ├── pipeline-overview.md
+│   ├── repo-tree.txt
+│   ├── rollback-strategy.md
+│   └── secret-management.md
+├── observability
+│   ├── grafana
+│   │   └── provisioning
+│   └── prometheus.yml
+├── src
+│   ├── lib
+│   │   ├── logger.ts
+│   │   └── metrics.ts
+│   ├── models
+│   │   └── update.ts
+│   ├── routes
+│   │   ├── health.ts
+│   │   ├── index.ts
+│   │   ├── metrics.ts
+│   │   └── updates.ts
+│   └── index.ts
+├── terraform
+│   ├── main.tf
+│   ├── production.tfvars
+│   ├── staging.tfvars
+│   └── terraform.tfvars.example
+├── tests
+│   ├── health.test.ts
+│   ├── metrics.test.ts
+│   └── updates.test.ts
+├── .dockerignore
+├── .env.example
+├── .env.production
+├── .env.staging
+├── .gitignore
+├── Dockerfile
+├── README.md
+├── SECURITY.md
+├── build.mjs
+├── docker-compose.observability.yml
+├── docker-compose.yml
+├── package-lock.json
+├── package.json
+├── setup-git-history.sh
+├── tsconfig.json
+└── vitest.config.ts

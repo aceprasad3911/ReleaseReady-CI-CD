@@ -17,3 +17,5 @@ terraform/.terraform.lock.hcl
 !.env.example
 !.env.staging
 !.env.production
+dist
+coverage

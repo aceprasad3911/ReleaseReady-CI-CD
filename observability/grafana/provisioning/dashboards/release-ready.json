@@ -6,7 +6,7 @@
   "id": null,
   "title": "ReleaseReady — Four Golden Signals",
   "uid": "release-ready-golden-signals",
-  "version": 1,
+  "version": 2,
   "schemaVersion": 39,
   "refresh": "10s",
   "time": { "from": "now-15m", "to": "now" },
@@ -45,14 +45,14 @@
     },
     {
       "id": 3,
-      "title": "Errors — 5xx rate",
+      "title": "Errors — non-2xx rate",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum by (route) (rate(http_request_errors_total[5m]))",
-          "legendFormat": "{{route}}",
+          "expr": "sum by (status_code, route) (rate(http_requests_total{status_code!~\"2..\"}[1m]))",
+          "legendFormat": "{{status_code}} {{route}}",
           "refId": "A"
         }
       ],
